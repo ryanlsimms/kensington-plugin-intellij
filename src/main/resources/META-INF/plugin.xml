@@ -1,0 +1,58 @@
+<idea-plugin>
+    <id>com.kensington.plugin</id>
+    <name>Kensington</name>
+    <vendor>Kensington</vendor>
+    <description><![CDATA[
+        <p>CSS class name completions and validation for the <b>Kensington</b> JS template engine.</p>
+
+        <h3>Completion</h3>
+        <p>Autocomplete triggers inside <code>{ class: '...' }</code> and <code>{ class: ['...'] }</code> expressions
+        in JavaScript and TypeScript files. Multiple classes in one string are handled correctly — completion
+        applies only to the word being typed, not the whole value.</p>
+        <p>Class names are sourced from:</p>
+        <ul>
+            <li><b>Local files</b> — all <code>.css</code>, <code>.scss</code>, and <code>.less</code> files in the project.</li>
+            <li><b>CDN stylesheets</b> — any <code>https://…​.css</code> URL found in HTML, CSS, SCSS, Less, JS, or TS files
+            (including <code>&lt;link href="…"&gt;</code>, CSS <code>@import url("…")</code>, and Kensington
+            <code>t.link({ href: '…' })</code> calls). CDN files are fetched in the background, cached for 24 hours,
+            and refreshed automatically when a relevant file is saved. Commented-out URLs are ignored.</li>
+        </ul>
+
+        <h3>Unknown class inspection</h3>
+        <p>Class names that don't exist in any local or CDN stylesheet are highlighted with a warning.
+        Two quick fixes are available via <b>Alt+Enter</b>:</p>
+        <ul>
+            <li><b>Ignore class '…'</b> — suppresses the warning for that specific class name permanently.
+            The ignored list is saved in the project's inspection profile and can be viewed and edited in
+            <b>Settings → Editor → Inspections → Kensington → Unknown CSS class → Ignored Classes</b>.</li>
+            <li><b>Disable 'Unknown CSS class' inspection</b> — turns off the inspection for the whole project.
+            A <i>Re-enable</i> link appears in the notification that follows. The inspection can also be
+            re-enabled at any time in <b>Settings → Editor → Inspections → Kensington</b>.</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>JavaScript</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <completion.contributor
+            language="JavaScript"
+            implementationClass="com.kensington.plugin.KensingtonCompletionContributor"/>
+        <completion.contributor
+            language="TypeScript"
+            implementationClass="com.kensington.plugin.KensingtonCompletionContributor"/>
+        <projectService
+            serviceImplementation="com.kensington.plugin.CdnCssCache"/>
+        <postStartupActivity
+            implementation="com.kensington.plugin.KensingtonStartupActivity"/>
+        <localInspection
+            language="JavaScript"
+            shortName="KensingtonUnknownCssClass"
+            displayName="Unknown CSS class in Kensington template"
+            groupName="Kensington"
+            enabledByDefault="true"
+            level="WARNING"
+            implementationClass="com.kensington.plugin.KensingtonClassInspection"/>
+        <notificationGroup id="Kensington" displayType="BALLOON" isLogByDefault="false"/>
+    </extensions>
+</idea-plugin>
