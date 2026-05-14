@@ -15,6 +15,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBList
+import com.intellij.lang.javascript.psi.JSArrayLiteralExpression
 import com.intellij.lang.javascript.psi.JSElementVisitor
 import java.awt.BorderLayout
 import javax.swing.DefaultListModel
@@ -79,9 +80,21 @@ class KensingtonClassInspection : LocalInspectionTool() {
             override fun visitJSLiteralExpression(node: JSLiteralExpression) {
                 val property = PsiTreeUtil.getParentOfType(node, JSProperty::class.java) ?: return
                 if (property.name != "class") return
+                // Accept only direct string values and array items belonging to this property.
+                // Using node.parent (not getParentOfType) avoids false-negatives when the
+                // object itself is nested inside an outer array, e.g. t.el([{ class: 'foo' }]).
+                when (val nodeParent = node.parent) {
+                    property -> Unit                                               // { class: 'foo' }
+                    is JSArrayLiteralExpression -> if (nodeParent.parent != property) return // { class: ['foo'] }
+                    else -> return
+                }
 
                 val raw = node.text
-                val quote = raw.firstOrNull()?.takeIf { it in "'\"" } ?: return
+                val quote = when {
+                    raw.startsWith('\'') || raw.startsWith('"') -> raw[0]
+                    raw.startsWith('`') && !raw.contains("\${") -> '`'
+                    else -> return
+                }
                 val content = raw.removePrefix(quote.toString()).removeSuffix(quote.toString())
 
                 val cache = CdnCssCache.getInstance(node.project)

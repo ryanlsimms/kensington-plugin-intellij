@@ -9,6 +9,7 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileFilter
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
@@ -34,13 +35,20 @@ class CdnCssCache(private val project: Project) : Disposable {
     private val cacheDir: Path = Paths.get(PathManager.getSystemPath(), "kensington", "cdn-css")
     @Volatile private var classNames: Set<String> = emptySet()
     @Volatile private var localClassNames: Set<String> = emptySet()
+    /** class name → display name of the local file that first defines it */
+    @Volatile private var localClassSources: Map<String, String> = emptyMap()
+    /** class name → VirtualFile that first defines it, for go-to-definition */
+    @Volatile private var localClassFiles: Map<String, VirtualFile> = emptyMap()
     private val refreshing = AtomicBoolean(false)
 
     init {
         Files.createDirectories(cacheDir)
         classNames = loadFromDisk()
         ApplicationManager.getApplication().runReadAction {
-            localClassNames = CssScanner.scanLocalClasses(project)
+            val sources = CssScanner.scanWithSources(project)
+            localClassNames = sources.keys
+            localClassSources = sources.mapValues { (_, vf) -> vf.name }
+            localClassFiles = sources
         }
 
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
@@ -59,6 +67,10 @@ class CdnCssCache(private val project: Project) : Disposable {
 
     fun getClassNames(): Set<String> = classNames
     fun getLocalClassNames(): Set<String> = localClassNames
+    /** Maps each locally-defined class name to the filename it was first found in. */
+    fun getLocalClassSources(): Map<String, String> = localClassSources
+    /** Returns the VirtualFile that first defines the given class, or null if unknown/CDN-only. */
+    fun getLocalClassFile(className: String): VirtualFile? = localClassFiles[className]
 
     fun triggerRefresh() {
         if (refreshing.compareAndSet(false, true)) {
@@ -88,7 +100,10 @@ class CdnCssCache(private val project: Project) : Disposable {
         }
         if (changed) classNames = loadFromDisk()
         ApplicationManager.getApplication().runReadAction {
-            localClassNames = CssScanner.scanLocalClasses(project)
+            val sources = CssScanner.scanWithSources(project)
+            localClassNames = sources.keys
+            localClassSources = sources.mapValues { (_, vf) -> vf.name }
+            localClassFiles = sources
         }
     }
 

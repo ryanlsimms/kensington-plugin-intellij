@@ -4,6 +4,8 @@ import com.intellij.codeInsight.completion.CompletionParameters
 import com.intellij.codeInsight.completion.CompletionProvider
 import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.lookup.LookupElementBuilder
+import com.intellij.lang.javascript.psi.JSArrayLiteralExpression
+import com.intellij.lang.javascript.psi.JSLiteralExpression
 import com.intellij.lang.javascript.psi.JSProperty
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.ProcessingContext
@@ -20,8 +22,23 @@ class CssClassNameProvider : CompletionProvider<CompletionParameters>() {
         val prefix = currentWordPrefix(parameters)
         val resultSet = result.withPrefixMatcher(prefix)
         val cache = CdnCssCache.getInstance(project)
-        (cache.getLocalClassNames() + cache.getClassNames()).sorted().forEach { name ->
-            resultSet.addElement(LookupElementBuilder.create(name))
+        val localSources = cache.getLocalClassSources()
+        val localNames = cache.getLocalClassNames()
+        val cdnNames = cache.getClassNames()
+
+        // Local classes with their source filename as type text
+        localNames.sorted().forEach { name ->
+            resultSet.addElement(
+                LookupElementBuilder.create(name)
+                    .withTypeText(localSources[name] ?: "CSS", true)
+            )
+        }
+        // CDN classes not already covered by local files
+        (cdnNames - localNames).sorted().forEach { name ->
+            resultSet.addElement(
+                LookupElementBuilder.create(name)
+                    .withTypeText("CDN", true)
+            )
         }
     }
 
@@ -37,6 +54,14 @@ class CssClassNameProvider : CompletionProvider<CompletionParameters>() {
         val property = PsiTreeUtil.getParentOfType(
             parameters.position, JSProperty::class.java
         ) ?: return false
-        return property.name == "class"
+        if (property.name != "class") return false
+        val literal = PsiTreeUtil.getParentOfType(
+            parameters.position, JSLiteralExpression::class.java
+        ) ?: return false
+        return when (val parent = literal.parent) {
+            property -> true                                          // { class: 'foo' }
+            is JSArrayLiteralExpression -> parent.parent == property // { class: ['foo'] }
+            else -> false
+        }
     }
 }

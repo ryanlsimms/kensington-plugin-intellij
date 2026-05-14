@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.kensington.plugin</id>
     <name>Kensington</name>
-    <vendor>Kensington</vendor>
+    <vendor email="ryan_s@beezwax.net" url="https://beezwax.net">Kensington</vendor>
     <description><![CDATA[
         <p>CSS class name completions and validation for the <b>Kensington</b> JS template engine.</p>
 
@@ -31,6 +31,13 @@
         </ul>
     ]]></description>
 
+    <change-notes><![CDATA[
+        <ul>
+            <li><b>1.0.0</b> — Initial release: CSS class completions, unknown-class inspection,
+            go-to-definition, find usages, and CDN stylesheet support.</li>
+        </ul>
+    ]]></change-notes>
+
     <depends>com.intellij.modules.platform</depends>
     <depends>JavaScript</depends>
 
@@ -53,6 +60,28 @@
             enabledByDefault="true"
             level="WARNING"
             implementationClass="com.kensington.plugin.KensingtonClassInspection"/>
+        <gotoDeclarationHandler
+            implementation="com.kensington.plugin.KensingtonGotoDeclarationHandler"/>
+        <referencesSearch
+            implementation="com.kensington.plugin.KensingtonClassUsagesSearcher"/>
+        <usageTypeProvider
+            order="first"
+            implementation="com.kensington.plugin.KensingtonUsageTypeProvider"/>
+        <psi.referenceContributor
+            language="JavaScript"
+            implementation="com.kensington.plugin.KensingtonCssReferenceContributor"/>
+        <psi.referenceContributor
+            language="TypeScript"
+            implementation="com.kensington.plugin.KensingtonCssReferenceContributor"/>
         <notificationGroup id="Kensington" displayType="BALLOON" isLogByDefault="false"/>
     </extensions>
+
+    <actions>
+        <action id="Kensington.RefreshCss"
+                class="com.kensington.plugin.KensingtonRefreshAction"
+                text="Refresh Kensington CSS"
+                description="Re-scan local CSS files and re-fetch CDN stylesheets">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
