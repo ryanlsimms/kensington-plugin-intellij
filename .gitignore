@@ -5,3 +5,6 @@ build/
 /.intellijPlatform/
 /.kotlin/
 /.claude/
+/notes.txt
+/private.pem
+/chain.crt

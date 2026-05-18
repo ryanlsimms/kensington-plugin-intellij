@@ -1,14 +1,15 @@
 <idea-plugin>
     <id>com.kensington.plugin</id>
     <name>Kensington</name>
-    <vendor email="ryan_s@beezwax.net" url="https://beezwax.net">Kensington</vendor>
+    <vendor email="rlsimms@gmail.com" url="https://ryansimms">Kensington</vendor>
     <description><![CDATA[
-        <p>CSS class name completions and validation for the <b>Kensington</b> JS template engine.</p>
+        <p>CSS class name completions and validation for the <b>Kensington</b> JS template library.</p>
 
         <h3>Completion</h3>
         <p>Autocomplete triggers inside <code>{ class: '...' }</code> and <code>{ class: ['...'] }</code> expressions
         in JavaScript and TypeScript files. Multiple classes in one string are handled correctly — completion
-        applies only to the word being typed, not the whole value.</p>
+        applies only to the word being typed, not the whole value. Each suggestion shows the source filename
+        (e.g. <code>styles.css</code>) or <code>CDN</code> as a type hint.</p>
         <p>Class names are sourced from:</p>
         <ul>
             <li><b>Local files</b> — all <code>.css</code>, <code>.scss</code>, and <code>.less</code> files in the project.</li>
@@ -17,6 +18,13 @@
             <code>t.link({ href: '…' })</code> calls). CDN files are fetched in the background, cached for 24 hours,
             and refreshed automatically when a relevant file is saved. Commented-out URLs are ignored.</li>
         </ul>
+
+        <h3>Go to declaration</h3>
+        <p>Cmd+Click (macOS) or Ctrl+B (Windows/Linux) on a class name inside a Kensington template jumps directly
+        to the CSS selector definition in the local stylesheet.</p>
+
+        <h3>Find usages</h3>
+        <p>Invoking <b>Find Usages</b> on a CSS class selector finds all Kensington templates that reference that class.</p>
 
         <h3>Unknown class inspection</h3>
         <p>Class names that don't exist in any local or CDN stylesheet are highlighted with a warning.
