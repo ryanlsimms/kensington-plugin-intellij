@@ -44,12 +44,10 @@ class CdnCssCache(private val project: Project) : Disposable {
     init {
         Files.createDirectories(cacheDir)
         classNames = loadFromDisk()
-        ApplicationManager.getApplication().runReadAction {
-            val sources = CssScanner.scanWithSources(project)
-            localClassNames = sources.keys
-            localClassSources = sources.mapValues { (_, vf) -> vf.name }
-            localClassFiles = sources
-        }
+        // Local scan happens asynchronously via triggerRefresh() (called from
+        // KensingtonStartupActivity). Do NOT scan here — `init` may run on the EDT or
+        // inside an existing read action, and a synchronous full-project scan would
+        // freeze the IDE or block any pending write actions.
 
         project.messageBus.connect(this).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
@@ -99,12 +97,10 @@ class CdnCssCache(private val project: Project) : Disposable {
             if (fetchIfStale(url)) changed = true
         }
         if (changed) classNames = loadFromDisk()
-        ApplicationManager.getApplication().runReadAction {
-            val sources = CssScanner.scanWithSources(project)
-            localClassNames = sources.keys
-            localClassSources = sources.mapValues { (_, vf) -> vf.name }
-            localClassFiles = sources
-        }
+        val sources = CssScanner.scanWithSources(project)
+        localClassNames = sources.keys
+        localClassSources = sources.mapValues { (_, vf) -> vf.name }
+        localClassFiles = sources
     }
 
     private fun loadFromDisk(): Set<String> {
@@ -122,18 +118,29 @@ class CdnCssCache(private val project: Project) : Disposable {
 
     private fun detectCdnCssUrls(): Set<String> {
         val urls = mutableSetOf<String>()
-        val root = project.guessProjectDir() ?: return urls
-        ApplicationManager.getApplication().runReadAction {
+        val app = ApplicationManager.getApplication()
+        val root = app.runReadAction<VirtualFile?> { project.guessProjectDir() } ?: return urls
+
+        // Collect file references in one short read action — VFS tree walk is in-memory and fast.
+        val files = mutableListOf<VirtualFile>()
+        app.runReadAction {
             VfsUtil.iterateChildrenRecursively(root, VirtualFileFilter { vf ->
                 !vf.isDirectory || vf.name !in skipDirs
             }) { vf ->
-                if (!vf.isDirectory && vf.extension in scanExtensions) {
-                    runCatching {
-                        val content = stripComments(String(vf.contentsToByteArray()), vf.extension)
-                        cdnCssUrlPattern.findAll(content).forEach { urls.add(it.value) }
-                    }
-                }
+                if (!vf.isDirectory && vf.extension in scanExtensions) files.add(vf)
                 true
+            }
+        }
+
+        // Read each file in its own short read action so a pending write action (e.g.
+        // PsiManager.dropPsiCaches from the TS service restart) can interleave between files.
+        for (vf in files) {
+            app.runReadAction {
+                if (!vf.isValid) return@runReadAction
+                runCatching {
+                    val content = stripComments(String(vf.contentsToByteArray()), vf.extension)
+                    cdnCssUrlPattern.findAll(content).forEach { urls.add(it.value) }
+                }
             }
         }
         return urls

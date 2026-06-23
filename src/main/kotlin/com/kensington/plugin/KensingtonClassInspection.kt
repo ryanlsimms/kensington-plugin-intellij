@@ -28,8 +28,31 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager
 import com.intellij.psi.PsiElementVisitor
+import com.intellij.psi.PsiFile
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.xmlb.annotations.XCollection
+
+/**
+ * Calls DaemonCodeAnalyzer.restart via reflection, preferring the modern
+ * `restart(Object reason)` / `restart(PsiFile, Object)` overloads (added in 2025.x)
+ * and falling back to the legacy no-reason form on 2024.3. Going through reflection
+ * for both paths keeps deprecated-method bytecode references out of the plugin so
+ * the JetBrains plugin verifier stops flagging them.
+ */
+private fun restartDaemon(daemon: DaemonCodeAnalyzer, reason: String, file: PsiFile? = null) {
+    val cls = daemon.javaClass
+    val withReason = runCatching {
+        if (file != null) cls.getMethod("restart", PsiFile::class.java, Any::class.java)
+        else cls.getMethod("restart", Any::class.java)
+    }.getOrNull()
+    if (withReason != null) {
+        if (file != null) withReason.invoke(daemon, file, reason) else withReason.invoke(daemon, reason)
+        return
+    }
+    val legacy = if (file != null) cls.getMethod("restart", PsiFile::class.java)
+                 else cls.getMethod("restart")
+    if (file != null) legacy.invoke(daemon, file) else legacy.invoke(daemon)
+}
 
 class KensingtonClassInspection : LocalInspectionTool() {
 
@@ -135,7 +158,8 @@ class KensingtonClassInspection : LocalInspectionTool() {
             synchronized(ignoredClasses) {
                 if (!ignoredClasses.contains(className)) ignoredClasses.add(className)
             }
-            DaemonCodeAnalyzer.getInstance(project).restart(descriptor.psiElement.containingFile)
+            val file = descriptor.psiElement.containingFile
+            restartDaemon(DaemonCodeAnalyzer.getInstance(project), "Kensington: ignored class added", file)
         }
     }
 
@@ -149,14 +173,15 @@ class KensingtonClassInspection : LocalInspectionTool() {
             val profile = InspectionProjectProfileManager.getInstance(project).currentProfile as InspectionProfileImpl
             profile.setToolEnabled(SHORT_NAME, false, project)
             profile.profileChanged()
-            DaemonCodeAnalyzer.getInstance(project).restart()
+            val daemon = DaemonCodeAnalyzer.getInstance(project)
+            restartDaemon(daemon, "Kensington: inspection disabled")
             NotificationGroupManager.getInstance()
                 .getNotificationGroup("Kensington")
                 .createNotification("'Unknown CSS class' inspection disabled", NotificationType.INFORMATION)
                 .addAction(NotificationAction.createSimple("Re-enable") {
                     profile.setToolEnabled(SHORT_NAME, true, project)
                     profile.profileChanged()
-                    DaemonCodeAnalyzer.getInstance(project).restart()
+                    restartDaemon(daemon, "Kensington: inspection re-enabled")
                 })
                 .notify(project)
         }

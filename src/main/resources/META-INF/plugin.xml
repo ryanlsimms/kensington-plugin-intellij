@@ -41,6 +41,8 @@
 
     <change-notes><![CDATA[
         <ul>
+            <li><b>1.0.2</b> — Fix EDT freeze when the TypeScript service restarts during a CSS scan.</li>
+            <li><b>1.0.1</b> — Fix compatibility declaration for RubyMine 2025.x and 2026.x.</li>
             <li><b>1.0.0</b> — Initial release: CSS class completions, unknown-class inspection,
             go-to-definition, find usages, and CDN stylesheet support.</li>
         </ul>
