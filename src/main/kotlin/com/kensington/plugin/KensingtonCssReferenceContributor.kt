@@ -35,9 +35,14 @@ class KensingtonCssReferenceContributor : PsiReferenceContributor() {
     private fun isInsideClassProperty(literal: JSLiteralExpression): Boolean {
         val property = PsiTreeUtil.getParentOfType(literal, JSProperty::class.java) ?: return false
         if (property.name != "class") return false
-        val arrayParent = PsiTreeUtil.getParentOfType(literal, JSArrayLiteralExpression::class.java)
-        if (arrayParent != null) return arrayParent.parent == property
-        return true
+        // Only accept the two literal shapes a class value can take. Using literal.parent (not
+        // getParentOfType) prevents false-negatives when the whole property sits inside an
+        // outer children-array like t.header({ class: '…' }, [t.span({ class: '…' }), …]).
+        return when (val parent = literal.parent) {
+            property -> true                                                    // { class: 'foo' }
+            is JSArrayLiteralExpression -> parent.parent == property           // { class: ['foo'] }
+            else -> false
+        }
     }
 
     private fun referencesForLiteral(literal: JSLiteralExpression): Array<PsiReference> {
@@ -77,7 +82,7 @@ internal class KensingtonCssReference(
     override fun resolve(): PsiElement? {
         val project = element.project
         val cache = CdnCssCache.getInstance(project)
-        val vf = cache.getLocalClassFile(className)?.takeIf { it.isValid } ?: return null
+        val vf = cache.getClassFile(className)?.takeIf { it.isValid } ?: return null
         val offset = CssScanner.findClassOffset(vf, className) ?: return null
         val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return null
         return psiFile.findElementAt(offset) ?: psiFile

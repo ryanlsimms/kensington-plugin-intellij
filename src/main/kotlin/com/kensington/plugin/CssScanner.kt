@@ -1,47 +1,50 @@
 package com.kensington.plugin
 
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
-import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 
 internal object CssScanner {
     private val classPattern = Regex("""\.[a-zA-Z_][\w-]*""")
     val cssExtensions = setOf("css", "scss", "less")
-    val skipDirs = setOf(".git", ".idea", ".gradle", "build", "out", ".cache")
 
     fun scanLocalClasses(project: Project): Set<String> = scanWithSources(project).keys
 
     /**
-     * Returns class name → first VirtualFile that defines it. Safe to call from a background
-     * thread; uses a short read action per file so a pending write action can interleave
-     * between files instead of waiting for the whole scan.
+     * Extracts class names from an explicit list of CSS files, mapping each name to the
+     * first file that defines it. Used for CSS files discovered outside the normal project
+     * scan (e.g. resolved via node_modules).
+     */
+    fun scanClassesFromFiles(project: Project, files: List<VirtualFile>): Map<String, VirtualFile> {
+        val result = mutableMapOf<String, VirtualFile>()
+        for (file in files) {
+            ProgressManager.checkCanceled()
+            val bytes = ProjectFileScanner.readBytes(project, file) ?: continue
+            val content = stripNoise(String(bytes))
+            classPattern.findAll(content).forEach { match ->
+                ProgressManager.checkCanceled()
+                val name = match.value.removePrefix(".")
+                if (name !in result) result[name] = file
+            }
+        }
+        return result
+    }
+
+    /**
+     * Returns class name → first VirtualFile that defines it. File discovery and content reads use
+     * cancellable read actions; regex processing runs without the application read lock.
      */
     fun scanWithSources(project: Project): Map<String, VirtualFile> {
         val result = mutableMapOf<String, VirtualFile>()
-        val app = ApplicationManager.getApplication()
-        val base = app.runReadAction<VirtualFile?> { project.guessProjectDir() } ?: return result
-
-        val files = mutableListOf<VirtualFile>()
-        app.runReadAction {
-            VfsUtil.iterateChildrenRecursively(base, { vf ->
-                !vf.isDirectory || vf.name !in skipDirs
-            }) { vf ->
-                if (!vf.isDirectory && vf.extension in cssExtensions) files.add(vf)
-                true
-            }
-        }
-
-        for (vf in files) {
-            app.runReadAction {
-                if (!vf.isValid) return@runReadAction
-                runCatching {
-                    val content = stripNoise(String(vf.contentsToByteArray()))
-                    classPattern.findAll(content).forEach { match ->
-                        val name = match.value.removePrefix(".")
-                        if (name !in result) result[name] = vf
-                    }
+        for (file in ProjectFileScanner.collectFiles(project, cssExtensions)) {
+            ProgressManager.checkCanceled()
+            val bytes = ProjectFileScanner.readBytes(project, file) ?: continue
+            val content = stripNoise(String(bytes))
+            classPattern.findAll(content).forEach { match ->
+                ProgressManager.checkCanceled()
+                val name = match.value.removePrefix(".")
+                if (name !in result) {
+                    result[name] = file
                 }
             }
         }

@@ -3,45 +3,47 @@ package com.kensington.plugin
 import com.intellij.lang.javascript.psi.JSArrayLiteralExpression
 import com.intellij.lang.javascript.psi.JSLiteralExpression
 import com.intellij.lang.javascript.psi.JSProperty
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.QueryExecutorBase
-import com.intellij.openapi.roots.ProjectRootManager
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
-import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiRecursiveElementVisitor
 import com.intellij.psi.PsiReference
+import com.intellij.psi.search.SearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.Processor
 
 class KensingtonClassUsagesSearcher :
-    QueryExecutorBase<PsiReference, ReferencesSearch.SearchParameters>(true) {
+    QueryExecutorBase<PsiReference, ReferencesSearch.SearchParameters>() {
 
-    private val skipDirs = setOf(".git", ".idea", "node_modules", "build", "out", ".gradle")
     private val jsExtensions = setOf("js", "ts", "mjs", "cjs")
 
     override fun processQuery(
         params: ReferencesSearch.SearchParameters,
         consumer: Processor<in PsiReference>
     ) {
-        val className = cssClassNameOf(params.elementToSearch) ?: return
-        val project = params.elementToSearch.project
-        val scope = params.effectiveSearchScope
+        val context = ReadAction.computeCancellable<SearchContext?, RuntimeException> {
+            val className = cssClassNameOf(params.elementToSearch) ?: return@computeCancellable null
+            SearchContext(className, params.elementToSearch.project, params.effectiveSearchScope)
+        } ?: return
 
-        ApplicationManager.getApplication().runReadAction {
-            val psiManager = PsiManager.getInstance(project)
-            for (root in ProjectRootManager.getInstance(project).contentRoots) {
-                VfsUtil.iterateChildrenRecursively(root, { vf ->
-                    !vf.isDirectory || vf.name !in skipDirs
-                }) { vf ->
-                    if (!vf.isDirectory && vf.extension in jsExtensions && scope.contains(vf)) {
-                        psiManager.findFile(vf)?.let { scanFile(it, className, consumer) }
-                    }
+        val psiManager = PsiManager.getInstance(context.project)
+        for (file in ProjectFileScanner.collectFiles(context.project, jsExtensions)) {
+            ProgressManager.checkCanceled()
+            val shouldContinue = ReadAction.computeCancellable<Boolean, RuntimeException> {
+                if (!file.isValid || !context.scope.contains(file)) {
                     true
+                } else {
+                    psiManager.findFile(file)?.let {
+                        scanFile(it, context.className, consumer)
+                    } ?: true
                 }
             }
+            if (!shouldContinue) return
         }
     }
 
@@ -49,36 +51,48 @@ class KensingtonClassUsagesSearcher :
         psiFile: com.intellij.psi.PsiFile,
         className: String,
         consumer: Processor<in PsiReference>
-    ) {
+    ): Boolean {
+        var shouldContinue = true
         psiFile.accept(object : PsiRecursiveElementVisitor() {
             override fun visitElement(element: PsiElement) {
-                super.visitElement(element)
-                val literal = element as? JSLiteralExpression ?: return
-                if (!isClassPropertyLiteral(literal)) return
+                ProgressManager.checkCanceled()
+                if (!shouldContinue) return
 
-                val raw = literal.text ?: return
-                val quoteChar = when {
-                    raw.startsWith('\'') || raw.startsWith('"') -> raw[0]
-                    raw.startsWith('`') && !raw.contains("\${") -> '`'
-                    else -> return
-                }
-                val content = raw
-                    .removePrefix(quoteChar.toString())
-                    .removeSuffix(quoteChar.toString())
+                val literal = element as? JSLiteralExpression
+                if (literal != null && isClassPropertyLiteral(literal)) {
+                    val raw = literal.text
+                    val quoteChar = when {
+                        raw.startsWith('\'') || raw.startsWith('"') -> raw[0]
+                        raw.startsWith('`') && !raw.contains("\${") -> '`'
+                        else -> null
+                    }
+                    if (quoteChar != null) {
+                        val content = raw
+                            .removePrefix(quoteChar.toString())
+                            .removeSuffix(quoteChar.toString())
 
-                var i = 0
-                while (i < content.length) {
-                    while (i < content.length && content[i].isWhitespace()) i++
-                    val start = i
-                    while (i < content.length && !content[i].isWhitespace()) i++
-                    if (i > start && content.substring(start, i) == className) {
-                        consumer.process(
-                            KensingtonCssReference(literal, TextRange(1 + start, 1 + i), className)
-                        )
+                        var i = 0
+                        while (i < content.length && shouldContinue) {
+                            while (i < content.length && content[i].isWhitespace()) i++
+                            val start = i
+                            while (i < content.length && !content[i].isWhitespace()) i++
+                            if (i > start && content.substring(start, i) == className) {
+                                shouldContinue = consumer.process(
+                                    KensingtonCssReference(
+                                        literal,
+                                        TextRange(1 + start, 1 + i),
+                                        className
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
+
+                if (shouldContinue) super.visitElement(element)
             }
         })
+        return shouldContinue
     }
 
     /**
@@ -115,4 +129,10 @@ class KensingtonClassUsagesSearcher :
             else -> false
         }
     }
+
+    private data class SearchContext(
+        val className: String,
+        val project: Project,
+        val scope: SearchScope
+    )
 }
